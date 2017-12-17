@@ -1,0 +1,150 @@
+# Practical Machine Learning
+## Course Project
+### Maher Deeb
+
+```{r set_work_directory,echo=FALSE}
+setwd('D:/000_Projects_2017/002_Import_export_project/Step3_learn_machine_learning/Coursera/Learn R/practical ml_ week4')
+```
+
+## Table of content:
+
+1. Introduction
+2. Data exploratory
+3. Data cleaning
+4. Split Data
+5. Data analysis
+6. Results and conclusion
+7. Acknowledgment
+
+## Introduction:
+
+The goal of this project is to predict the manner in which the participants did certain types of exercises.The Data was collected using  devices such as Jawbone Up, Nike FuelBand, and Fitbit. In this project the data was produced using accelerometers on the belt, forearm, arm, and dumbell of 6 participants who were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website [here](http://groupware.les.inf.puc-rio.br/har).
+
+The data, saved in csv file format, was placed at the same work dirctory of this file. Data was loaded Using the `read.csv` command. The features which contain a lot of missing or invalid data were dropped. After splitting the training to *training* and *cross validation* datasets a *Random Forests* model was used to train the model. The model was used to predict the classes of the *testing* dataset.
+
+## Data exploratory:
+
+The training dataset, saved in *pml-training.csv* file, contains 160 columns and 19622 records. There is 159 feature and the column 160 contains the labels. The labels are 5 classes: A, B, C, D, E which are corresponded to (sitting-down, standing-up, standing, walking, and sitting) collected on 8 hours of activities of 4 healthy subjects. For the testing dataset, saved in *pml-testing.csv*, the last column contain the *problem id* corresponded to the quiz that should be solved based on the results of this project. Since the loaded data using `read.csv` are `data.frame` the varaible will be named as `df_train`, `df_sub`. *_sub* refers to the data that should be submitted after training the model. It is used to avoid confusion with the testing dataset when the training dataset was splitted to training and testing (corss validation) datasets.
+
+```{r loaddata}
+df_train<-read.csv('pml-training.csv')
+df_sub<-read.csv('pml-testing.csv')
+```
+
+
+##Data cleaning:
+
+Since there is a lot of features which contain missing or invalues it is important to exclude those feature from the calculation. An example of such feature is giving here:
+
+```{r}
+summary(df_train[,30:36])
+```
+ 
+We can see that we have 19216 `NA` values which is about 98% of the data amount. An example of invalid values `#DIV/0!` is giving here:
+
+```{r}
+summary(df_train[,125:130])
+```
+
+After dropping the columns that contain missing and invalid values we get only 58 columns including the labels. On other words 57 features and 1 column of labels. The data after removing the unusful columns are assigned to `df_train_c` and `df_sub_c`. *_c* refers to clean data.
+
+```{r}
+df_train_c<-df_train[,c(2,4:11,37:49,60:68,84:86,102,113:124,140,151:160)]
+df_sub_c<-df_sub[,c(2,4:11,37:49,60:68,84:86,102,113:124,140,151:160)]
+```
+
+In order to explore the data and check if there is some missing values or not and to calculte the correlation between the features and labels the text in categorical features to numerical values as follows:
+
+```{r}
+indx <- sapply(df_train_c, is.factor)
+df_train_c[indx] <- lapply(df_train_c[indx], function(x) as.numeric(x))
+df_sub_c[indx] <- lapply(df_sub_c[indx], function(x) as.numeric(x))
+```
+
+The following code was used to check the amount of *missing values* in % in the training data:
+
+```{r}
+cat(sapply(df_train_c,function(x) round(100*sum(is.na(x))/nrow(df_train_c),digits = 1)),' %')
+```
+
+The amount of missing data in the testing dataset:
+
+```{r}
+cat(sapply(df_sub_c,function(x) round(100*sum(is.na(x))/nrow(df_sub_c),digits = 1)),' %')
+```
+
+To check the redundency in the features the correlation was calculated first then the features that have square of correlation larger than 0.7 are checked.`corrplot` library was used to plot the correlation matrix:
+
+```{r}
+library(corrplot)
+corr_train<-cor(df_train_c[sapply(df_train_c, is.numeric)], use = "pairwise.complete.obs")
+diag(corr_train)<-0
+corr_train[corr_train**2<0.7]<-0
+c<-corr_train[which(rowSums(corr_train**2)!=0),]
+c<-c[,colSums(c**2) !=0]
+corrplot(c, type = "upper", order = "hclust", cl.length = 10,method = "pie",
+         tl.col = "black", tl.srt = 45)
+```
+
+##split data:
+
+The training dataset was splitted to training and testing data set with 80/20 rule. A `seed` was set to 963 value for a reproducible analysis. `caret` library was used to perform the analysis in the next step.
+
+```{r}
+set.seed(963)
+library(caret)
+df_train_c[,58] <- as.factor(df_train_c[,58])
+train_id=createDataPartition(y=df_train_c$classe,p=0.8,list=FALSE)
+Training=df_train_c[train_id,]
+testing=df_train_c[-train_id,]
+```
+
+
+##Data analysis:
+
+For this project *Random Forests* method was used to train the model. This decsion was made after trying several methods. It seems that *Random Forests* perform very good in for this project. Some options were defined to control the `train` function. `repeatedcv` was chosen as resampling method for repeated training/test splits with 5 *k-fold* and 3 for repeated k-fold cross-validation. For efficient analysis parallel computation was used as explained [here](https://github.com/lgreski/datasciencectacontent/blob/master/markdown/pml-randomForestPerformance.md)
+
+```{r}
+library(parallel)
+library(doParallel)
+cluster <- makeCluster(detectCores() - 2)
+registerDoParallel(cluster)
+```
+
+
+
+```{r}
+ctrl <- trainControl(method = "repeatedcv", 
+number = 5, 
+repeats = 3,
+allowParallel = TRUE)
+```
+
+The model is trained by using the following code. The model properties the chosen model by caret are shown here where A = 1, B = 2,C = 3,D = 4,E = 5
+
+```{r,cache=TRUE}
+ModFit<-train(classe~.,data=Training,method='rf',trControl=ctrl,prox=TRUE)
+print(ModFit)
+
+stopCluster(cluster)
+registerDoSEQ()
+```
+
+##Results and conclusion:
+
+In order to check the accuary of the model the model was used to predict the values of the testing datasets obtained from the splitted training set. The `confusionMatrix` function was used to check the accuary of the model on the testing (corss-validation) dataset. The model shows high accuracy in predecting all classes. 
+
+```{r}
+pred_rf<- predict(ModFit,testing)
+confusionMatrix(pred_rf, testing$classe)
+```
+
+Finally, the model was used to predict the label of the testing dataset that should be used to solve the quiz at the end of this course.
+
+```{r}
+pred_sub<- predict(ModFit,df_sub_c)
+```
+
+
+##Acknowledgment:
+The data for this project come from this [source](http://groupware.les.inf.puc-rio.br/har). I thank **Groupware@LES** for providing data to make this project possible.
